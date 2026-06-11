@@ -17,6 +17,12 @@ const mobileRoutes = [
         name: 'ReportEntry',
         component: () => import('@/views/mobile/ReportEntryPage.vue'),
         meta: { title: '我要报告', tabbar: 'report' }
+      },
+      {
+        path: 'my-reports',
+        name: 'MyReports',
+        component: () => import('@/views/mobile/MyReportListPage.vue'),
+        meta: { title: '我的举报', tabbar: 'my' }
       }
     ]
   },
@@ -31,6 +37,18 @@ const mobileRoutes = [
     name: 'ReportForm',
     component: () => import('@/views/mobile/ReportFormPage.vue'),
     meta: { title: '填写报告' }
+  },
+  {
+    path: '/my-reports/:queryCode',
+    name: 'ReportDetail',
+    component: () => import('@/views/mobile/ReportDetailPage.vue'),
+    meta: { title: '举报详情' }
+  },
+  {
+    path: '/my-reports/:queryCode/supplement',
+    name: 'ReportSupplement',
+    component: () => import('@/views/mobile/ReportSupplementPage.vue'),
+    meta: { title: '补充材料' }
   }
 ]
 

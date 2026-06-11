@@ -5,6 +5,23 @@
       <h1 class="title">{{ platformTitle }}</h1>
     </div>
 
+    <!-- 提交成功弹窗 -->
+    <van-dialog v-model:show="showSuccessDialog" :show-confirm-button="false" :show-cancel-button="false" title="提交成功">
+      <div class="success-content">
+        <van-icon name="checked" size="60" color="#07c160" />
+        <p class="success-tip">您的举报已提交，请妥善保存以下查询码以跟踪处理进度</p>
+        <div class="query-code-box">
+          <div class="query-code-label">查询码</div>
+          <div class="query-code-value">{{ lastQueryCode }}</div>
+          <van-button size="small" plain type="primary" @click="copyQueryCode">复制查询码</van-button>
+        </div>
+        <div class="success-actions">
+          <van-button plain type="default" block round @click="goHome">返回首页</van-button>
+          <van-button type="primary" block round style="margin-top: 10px" @click="goToMyReports">查看我的举报</van-button>
+        </div>
+      </div>
+    </van-dialog>
+
     <!-- 动态表单区 -->
     <div class="form-section">
       <van-loading v-if="loading" size="32px" class="form-loading" />
@@ -124,6 +141,46 @@ const submitting = ref(false)
 const loading = ref(false)
 const backLabel = ref('返回')
 const submitLabel = ref('提交')
+
+const showSuccessDialog = ref(false)
+const lastQueryCode = ref('')
+
+function saveQueryCode(code) {
+  if (!code) return
+  const codes = JSON.parse(localStorage.getItem('my_report_codes') || '[]')
+  if (!codes.includes(code)) {
+    codes.unshift(code)
+    localStorage.setItem('my_report_codes', JSON.stringify(codes))
+  }
+}
+
+function copyQueryCode() {
+  if (navigator.clipboard) {
+    navigator.clipboard.writeText(lastQueryCode.value).then(() => {
+      showToast('已复制')
+    }).catch(() => {
+      showToast('复制失败，请手动复制')
+    })
+  } else {
+    const textarea = document.createElement('textarea')
+    textarea.value = lastQueryCode.value
+    document.body.appendChild(textarea)
+    textarea.select()
+    document.execCommand('copy')
+    document.body.removeChild(textarea)
+    showToast('已复制')
+  }
+}
+
+function goHome() {
+  showSuccessDialog.value = false
+  router.push('/')
+}
+
+function goToMyReports() {
+  showSuccessDialog.value = false
+  router.push('/my-reports')
+}
 
 // Date picker
 const showDatePicker = ref(false)
@@ -288,10 +345,12 @@ async function onSubmit() {
     const data = await res.json()
     
     if (data.success) {
-      showSuccessToast('提交成功')
-      setTimeout(() => {
-        router.push('/')
-      }, 1500)
+      const queryCode = data.data?.query_code
+      lastQueryCode.value = queryCode || ''
+      if (queryCode) {
+        saveQueryCode(queryCode)
+      }
+      showSuccessDialog.value = true
     } else {
       showFailToast(data.message || '提交失败')
     }
@@ -318,4 +377,11 @@ onMounted(async () => {
 .title { color: #fff; font-size: 18px; font-weight: 600; }
 .form-section { margin: 12px 16px; background: #fff; border-radius: 12px; overflow: hidden; box-shadow: 0 2px 8px rgba(0,0,0,0.06); }
 .action-area { padding: 20px 16px; }
+
+.success-content { text-align: center; padding: 10px 0; }
+.success-tip { color: #666; font-size: 14px; margin: 16px 0 20px; line-height: 1.6; }
+.query-code-box { background: #f5f7fa; border-radius: 8px; padding: 16px; margin-bottom: 20px; }
+.query-code-label { font-size: 12px; color: #999; margin-bottom: 6px; }
+.query-code-value { font-size: 22px; font-weight: 700; color: #1989fa; letter-spacing: 2px; margin-bottom: 10px; }
+.success-actions { padding: 0 10px; }
 </style>

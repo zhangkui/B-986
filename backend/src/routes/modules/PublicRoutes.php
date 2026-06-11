@@ -1,7 +1,7 @@
 <?php
 /**
  * 公开 API 路由处理 trait
- * 首页配置/分类/知识/注意事项/表单定义/地区/提交/上传
+ * 首页配置/分类/知识/注意事项/表单定义/地区/提交/上传/举报查询
  */
 trait PublicRoutes {
     private function handleGetConfig(): void {
@@ -85,6 +85,23 @@ trait PublicRoutes {
         $this->jsonResponse(['success' => true, 'data' => $tree]);
     }
 
+    private function generateQueryCode(PDO $db): string {
+        $prefix = 'JB';
+        $datePart = date('Ymd');
+        $attempts = 0;
+        while ($attempts < 10) {
+            $randomPart = str_pad((string)random_int(0, 9999), 4, '0', STR_PAD_LEFT);
+            $code = $prefix . $datePart . $randomPart;
+            $stmt = $db->prepare("SELECT COUNT(*) FROM reports WHERE query_code = ?");
+            $stmt->execute([$code]);
+            if ($stmt->fetchColumn() == 0) {
+                return $code;
+            }
+            $attempts++;
+        }
+        return $prefix . $datePart . substr(md5(uniqid('', true)), 0, 4);
+    }
+
     private function handleSubmitReport(): void {
         $input = json_decode(file_get_contents('php://input'), true);
         if (!$input || !isset($input['category_id']) || !isset($input['form_data'])) {
@@ -94,13 +111,179 @@ trait PublicRoutes {
         }
 
         $db = Database::getConnection();
-        $stmt = $db->prepare("INSERT INTO reports (category_id, region_id, form_data, status) VALUES (?, ?, ?, 'submitted')");
-        $stmt->execute([
-            (int)$input['category_id'],
-            $input['region_id'] ?? null,
-            json_encode($input['form_data'], JSON_UNESCAPED_UNICODE)
-        ]);
-        $this->jsonResponse(['success' => true, 'message' => '提交成功', 'data' => ['id' => $db->lastInsertId()]]);
+        $queryCode = $this->generateQueryCode($db);
+
+        try {
+            $db->beginTransaction();
+
+            $stmt = $db->prepare("INSERT INTO reports (query_code, category_id, region_id, form_data, status, submitted_at) VALUES (?, ?, ?, ?, 'pending', NOW())");
+            $stmt->execute([
+                $queryCode,
+                (int)$input['category_id'],
+                $input['region_id'] ?? null,
+                json_encode($input['form_data'], JSON_UNESCAPED_UNICODE)
+            ]);
+            $reportId = (int)$db->lastInsertId();
+
+            $stmtLog = $db->prepare("INSERT INTO report_logs (report_id, action, operator_id, operator_type, operator_name, from_status, to_status) VALUES (?, 'submit', NULL, 'user', '用户提交', NULL, 'pending')");
+            $stmtLog->execute([$reportId]);
+
+            $db->commit();
+
+            $this->jsonResponse([
+                'success' => true,
+                'message' => '提交成功',
+                'data' => [
+                    'id' => $reportId,
+                    'query_code' => $queryCode
+                ]
+            ]);
+        } catch (Throwable $e) {
+            $db->rollBack();
+            http_response_code(500);
+            $this->jsonResponse(['success' => false, 'message' => '提交失败：' . $e->getMessage()]);
+        }
+    }
+
+    private function handleGetReportDetail(string $queryCode): void {
+        if (!$queryCode) {
+            http_response_code(400);
+            $this->jsonResponse(['success' => false, 'message' => '请提供查询码']);
+            return;
+        }
+
+        $db = Database::getConnection();
+        $stmt = $db->prepare("SELECT r.*, c.name as category_name, reg.name as region_name, a.real_name as handler_name
+            FROM reports r
+            LEFT JOIN categories c ON r.category_id = c.id
+            LEFT JOIN regions reg ON r.region_id = reg.id
+            LEFT JOIN admins a ON r.handler_id = a.id
+            WHERE r.query_code = ? LIMIT 1");
+        $stmt->execute([$queryCode]);
+        $report = $stmt->fetch();
+
+        if (!$report) {
+            http_response_code(404);
+            $this->jsonResponse(['success' => false, 'message' => '未找到该举报记录']);
+            return;
+        }
+
+        if ($report['form_data']) {
+            $report['form_data'] = json_decode($report['form_data'], true);
+        }
+        if ($report['supplement_data']) {
+            $report['supplement_data'] = json_decode($report['supplement_data'], true);
+        }
+        if ($report['handle_attachments']) {
+            $report['handle_attachments'] = json_decode($report['handle_attachments'], true);
+        }
+
+        $statusMap = [
+            'pending' => '待受理',
+            'processing' => '处理中',
+            'supplement' => '待补充',
+            'completed' => '已办结',
+            'rejected' => '已驳回'
+        ];
+        $report['status_text'] = $statusMap[$report['status']] ?? $report['status'];
+
+        $stmtLogs = $db->prepare("SELECT * FROM report_logs WHERE report_id = ? ORDER BY created_at ASC, id ASC");
+        $stmtLogs->execute([$report['id']]);
+        $report['logs'] = $stmtLogs->fetchAll();
+
+        $this->jsonResponse(['success' => true, 'data' => $report]);
+    }
+
+    private function handleBatchGetReports(): void {
+        $codes = $_GET['codes'] ?? '';
+        if (!$codes) {
+            $this->jsonResponse(['success' => true, 'data' => []]);
+            return;
+        }
+
+        $codeList = array_filter(array_map('trim', explode(',', $codes)));
+        if (empty($codeList)) {
+            $this->jsonResponse(['success' => true, 'data' => []]);
+            return;
+        }
+
+        $db = Database::getConnection();
+        $placeholders = implode(',', array_fill(0, count($codeList), '?'));
+        $stmt = $db->prepare("SELECT r.id, r.query_code, r.category_id, r.region_id, r.status, r.submitted_at, r.accepted_at, r.handled_at,
+            c.name as category_name, reg.name as region_name
+            FROM reports r
+            LEFT JOIN categories c ON r.category_id = c.id
+            LEFT JOIN regions reg ON r.region_id = reg.id
+            WHERE r.query_code IN ($placeholders)
+            ORDER BY r.submitted_at DESC");
+        $stmt->execute($codeList);
+
+        $reports = $stmt->fetchAll();
+        $statusMap = [
+            'pending' => '待受理',
+            'processing' => '处理中',
+            'supplement' => '待补充',
+            'completed' => '已办结',
+            'rejected' => '已驳回'
+        ];
+        foreach ($reports as &$r) {
+            $r['status_text'] = $statusMap[$r['status']] ?? $r['status'];
+        }
+
+        $this->jsonResponse(['success' => true, 'data' => $reports]);
+    }
+
+    private function handleSupplementReport(string $queryCode): void {
+        if (!$queryCode) {
+            http_response_code(400);
+            $this->jsonResponse(['success' => false, 'message' => '请提供查询码']);
+            return;
+        }
+
+        $input = json_decode(file_get_contents('php://input'), true);
+        if (!$input || !isset($input['supplement_data'])) {
+            http_response_code(400);
+            $this->jsonResponse(['success' => false, 'message' => '缺少补充材料数据']);
+            return;
+        }
+
+        $db = Database::getConnection();
+        $stmt = $db->prepare("SELECT id, status FROM reports WHERE query_code = ? LIMIT 1");
+        $stmt->execute([$queryCode]);
+        $report = $stmt->fetch();
+
+        if (!$report) {
+            http_response_code(404);
+            $this->jsonResponse(['success' => false, 'message' => '未找到该举报记录']);
+            return;
+        }
+
+        if ($report['status'] !== 'supplement') {
+            http_response_code(400);
+            $this->jsonResponse(['success' => false, 'message' => '当前状态无需补充材料']);
+            return;
+        }
+
+        try {
+            $db->beginTransaction();
+
+            $stmtUpdate = $db->prepare("UPDATE reports SET supplement_data = ?, status = 'processing', updated_at = NOW() WHERE id = ?");
+            $stmtUpdate->execute([
+                json_encode($input['supplement_data'], JSON_UNESCAPED_UNICODE),
+                $report['id']
+            ]);
+
+            $remark = $input['remark'] ?? '';
+            $stmtLog = $db->prepare("INSERT INTO report_logs (report_id, action, operator_id, operator_type, operator_name, remark, from_status, to_status) VALUES (?, 'supplement_submit', NULL, 'user', '用户提交补充', ?, 'supplement', 'processing')");
+            $stmtLog->execute([$report['id'], $remark]);
+
+            $db->commit();
+            $this->jsonResponse(['success' => true, 'message' => '补充材料提交成功']);
+        } catch (Throwable $e) {
+            $db->rollBack();
+            http_response_code(500);
+            $this->jsonResponse(['success' => false, 'message' => '提交失败：' . $e->getMessage()]);
+        }
     }
 
     private function handleUpload(): void {

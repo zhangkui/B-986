@@ -75,6 +75,24 @@ class Router
             return;
         }
 
+        // 批量查询我的举报列表 (通过多个查询码)
+        if (preg_match('#^/api/reports/mine$#', $uri, $m) && $method === 'GET') {
+            $this->handleBatchGetReports();
+            return;
+        }
+
+        // 查询举报详情 (通过查询码)
+        if (preg_match('#^/api/reports/([A-Za-z0-9]+)$#', $uri, $m) && $method === 'GET') {
+            $this->handleGetReportDetail($m[1]);
+            return;
+        }
+
+        // 补充举报材料 (通过查询码)
+        if (preg_match('#^/api/reports/([A-Za-z0-9]+)/supplement$#', $uri, $m) && $method === 'POST') {
+            $this->handleSupplementReport($m[1]);
+            return;
+        }
+
         // 文件上传
         if ($uri === '/api/upload' && $method === 'POST') {
             $this->handleUpload();

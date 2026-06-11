@@ -4,6 +4,7 @@
     <van-tabbar v-model="activeTab" route>
       <van-tabbar-item to="/" icon="home-o">{{ tabLabels.home }}</van-tabbar-item>
       <van-tabbar-item to="/report" icon="edit">{{ tabLabels.report }}</van-tabbar-item>
+      <van-tabbar-item to="/my-reports" icon="orders-o">{{ tabLabels.myReports }}</van-tabbar-item>
     </van-tabbar>
   </div>
 </template>
@@ -11,7 +12,7 @@
 <script setup>
 import { ref, onMounted } from 'vue'
 const activeTab = ref(0)
-const tabLabels = ref({ home: '首页', report: '我要报告' })
+const tabLabels = ref({ home: '首页', report: '我要报告', myReports: '我的举报' })
 
 onMounted(async () => {
   try {
@@ -20,6 +21,7 @@ onMounted(async () => {
     if (data.success && data.data) {
       tabLabels.value.home = data.data.btn_home?.config_value || '首页'
       tabLabels.value.report = data.data.btn_report?.config_value || '我要报告'
+      tabLabels.value.myReports = data.data.btn_my_reports?.config_value || '我的举报'
     }
   } catch {
     // keep defaults

@@ -119,17 +119,32 @@ CREATE TABLE IF NOT EXISTS `form_fields` (
 -- -----------------------------------------------------------
 CREATE TABLE IF NOT EXISTS `reports` (
   `id` INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  `query_code` VARCHAR(32) NOT NULL UNIQUE COMMENT '查询码，用于移动端跟踪',
   `category_id` INT UNSIGNED NOT NULL,
   `region_id` INT UNSIGNED DEFAULT NULL,
   `form_data` JSON NOT NULL COMMENT '提交的表单数据',
-  `status` ENUM('draft','submitted','reviewed') DEFAULT 'submitted',
+  `supplement_data` JSON DEFAULT NULL COMMENT '补充材料数据',
+  `status` ENUM('pending','processing','supplement','completed','rejected') DEFAULT 'pending' COMMENT '待受理/处理中/待补充/已办结/已驳回',
+  `handler_id` INT UNSIGNED DEFAULT NULL COMMENT '当前处理人ID',
+  `handle_opinion` TEXT COMMENT '处理意见',
+  `handle_result` TEXT COMMENT '办结结果',
+  `handle_attachments` JSON DEFAULT NULL COMMENT '处理附件URL列表',
+  `supplement_request` TEXT COMMENT '要求补充材料的说明',
+  `admin_remark` TEXT COMMENT '后台备注',
   `submitted_at` DATETIME DEFAULT CURRENT_TIMESTAMP,
+  `accepted_at` DATETIME DEFAULT NULL COMMENT '受理时间',
+  `handled_at` DATETIME DEFAULT NULL COMMENT '处理完成时间',
   `reviewer_id` INT UNSIGNED DEFAULT NULL,
   `reviewed_at` DATETIME DEFAULT NULL,
   `created_at` DATETIME DEFAULT CURRENT_TIMESTAMP,
   `updated_at` DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   FOREIGN KEY (`category_id`) REFERENCES `categories`(`id`) ON DELETE CASCADE,
-  FOREIGN KEY (`region_id`) REFERENCES `regions`(`id`) ON DELETE SET NULL
+  FOREIGN KEY (`region_id`) REFERENCES `regions`(`id`) ON DELETE SET NULL,
+  FOREIGN KEY (`handler_id`) REFERENCES `admins`(`id`) ON DELETE SET NULL,
+  KEY `idx_status` (`status`),
+  KEY `idx_query_code` (`query_code`),
+  KEY `idx_handler` (`handler_id`),
+  KEY `idx_created_at` (`created_at`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='填报记录';
 
 -- -----------------------------------------------------------
@@ -144,3 +159,23 @@ CREATE TABLE IF NOT EXISTS `uploads` (
   `file_size` INT UNSIGNED DEFAULT 0,
   `created_at` DATETIME DEFAULT CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='上传文件';
+
+-- -----------------------------------------------------------
+-- 10. 举报工单流转日志表
+-- -----------------------------------------------------------
+CREATE TABLE IF NOT EXISTS `report_logs` (
+  `id` INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  `report_id` INT UNSIGNED NOT NULL COMMENT '关联举报ID',
+  `action` VARCHAR(32) NOT NULL COMMENT '操作类型: submit/accept/assign/supplement_request/supplement_submit/complete/reject/remark',
+  `operator_id` INT UNSIGNED DEFAULT NULL COMMENT '操作人ID (管理员或NULL表示用户)',
+  `operator_type` ENUM('admin','user') DEFAULT 'admin' COMMENT '操作人类型',
+  `operator_name` VARCHAR(100) DEFAULT NULL COMMENT '操作人名称快照',
+  `remark` TEXT COMMENT '操作备注/意见',
+  `from_status` VARCHAR(32) DEFAULT NULL COMMENT '操作前状态',
+  `to_status` VARCHAR(32) DEFAULT NULL COMMENT '操作后状态',
+  `extra_data` JSON DEFAULT NULL COMMENT '附加数据',
+  `created_at` DATETIME DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (`report_id`) REFERENCES `reports`(`id`) ON DELETE CASCADE,
+  KEY `idx_report_id` (`report_id`),
+  KEY `idx_action` (`action`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='举报工单流转日志';
